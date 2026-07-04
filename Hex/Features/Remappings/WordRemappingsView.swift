@@ -137,7 +137,7 @@ struct WordRemappingsView: View {
 					Button {
 						store.send(.addWordRemapping)
 					} label: {
-						Label("Add Remapping", systemImage: "plus")
+						Label("Add Word", systemImage: "plus")
 					}
 					Spacer()
 				}
@@ -145,9 +145,9 @@ struct WordRemappingsView: View {
 			.padding(.vertical, 4)
 		} label: {
 			VStack(alignment: .leading, spacing: 4) {
-				Text("Word Remappings")
+				Text("Dictionary")
 					.font(.headline)
-				Text("Replace specific words in every transcript. Matches whole words, case-insensitive, in order.")
+				Text("Teach Hex how to spell names and terms. When it hears the left phrase, it writes the right one. Matches whole words, case-insensitive.")
 					.settingsCaption()
 			}
 		}
@@ -170,13 +170,13 @@ struct WordRemappingsView: View {
 		HStack(spacing: 8) {
 			Text("On")
 				.frame(width: Layout.toggleColumnWidth, alignment: .leading)
-			Text("Match")
+			Text("When Hex hears")
 				.frame(maxWidth: .infinity, alignment: .leading)
 			Image(systemName: "arrow.right")
 				.font(.caption)
 				.foregroundStyle(.secondary)
 				.frame(width: Layout.arrowColumnWidth)
-			Text("Replace")
+			Text("Write it as")
 				.frame(maxWidth: .infinity, alignment: .leading)
 			Spacer().frame(width: Layout.deleteColumnWidth)
 		}
@@ -254,7 +254,7 @@ private struct RemappingRow: View {
 				.toggleStyle(.checkbox)
 				.frame(width: Layout.toggleColumnWidth, alignment: .leading)
 
-			TextField("Match", text: $remapping.match)
+			TextField("When Hex hears…", text: $remapping.match)
 				.textFieldStyle(.roundedBorder)
 				.frame(maxWidth: .infinity, alignment: .leading)
 
@@ -262,7 +262,7 @@ private struct RemappingRow: View {
 				.foregroundStyle(.secondary)
 				.frame(width: Layout.arrowColumnWidth)
 
-			TextField("Replace", text: $remapping.replacement)
+			TextField("Write it as…", text: $remapping.replacement)
 				.textFieldStyle(.roundedBorder)
 				.frame(maxWidth: .infinity, alignment: .leading)
 
@@ -293,7 +293,7 @@ private enum ModificationSection: String, CaseIterable, Identifiable {
 		case .removals:
 			return "Word Removals"
 		case .remappings:
-			return "Word Remappings"
+			return "Dictionary"
 		}
 	}
 }

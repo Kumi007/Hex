@@ -16,6 +16,14 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		.init(pattern: "er+"),
 		.init(pattern: "hm+")
 	]
+	/// Seeded dictionary so Hex spells your names/terms correctly out of the box.
+	/// Left side = what Hex hears (case-insensitive), right side = what it writes.
+	public static let defaultWordRemappings: [WordRemapping] = [
+		.init(match: "kumengisa", replacement: "Kumengisa"),
+		.init(match: "moh growth", replacement: "Moh Growth"),
+		.init(match: "gbp", replacement: "GBP"),
+		.init(match: "hhmh", replacement: "HHMH")
+	]
 
 	public static var defaultPasteLastTranscriptHotkeyDescription: String {
 		let modifiers = defaultPasteLastTranscriptHotkey.modifiers.sorted.map { $0.stringValue }.joined()
@@ -78,7 +86,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		hasCompletedStorageMigration: Bool = false,
 		wordRemovalsEnabled: Bool = false,
 		wordRemovals: [WordRemoval] = HexSettings.defaultWordRemovals,
-		wordRemappings: [WordRemapping] = []
+		wordRemappings: [WordRemapping] = HexSettings.defaultWordRemappings
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.soundEffectsVolume = soundEffectsVolume
