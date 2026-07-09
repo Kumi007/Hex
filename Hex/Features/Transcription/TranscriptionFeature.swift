@@ -52,6 +52,9 @@ struct TranscriptionFeature {
     // Transcription result flow
     case transcriptionResult(String, URL, TimeInterval)
     case transcriptionError(Error, URL?)
+    // Fired when the async cleanup/paste pipeline finishes so the processing
+    // indicator can be dismissed.
+    case transcriptionPipelineFinished
 
     // Model availability
     case modelMissing
@@ -72,6 +75,7 @@ struct TranscriptionFeature {
   @Dependency(\.sleepManagement) var sleepManagement
   @Dependency(\.date.now) var now
   @Dependency(\.transcriptPersistence) var transcriptPersistence
+  @Dependency(\.transcriptCleanup) var transcriptCleanup
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
@@ -122,6 +126,11 @@ struct TranscriptionFeature {
 
       case let .transcriptionError(error, audioURL):
         return handleTranscriptionError(&state, error: error, audioURL: audioURL)
+
+      case .transcriptionPipelineFinished:
+        state.isTranscribing = false
+        state.isPrewarming = false
+        return .none
 
       case .modelMissing:
         return .none
@@ -410,12 +419,12 @@ private extension TranscriptionFeature {
     audioURL: URL,
     duration: TimeInterval
   ) -> Effect<Action> {
-    state.isTranscribing = false
     state.isPrewarming = false
 
     // Check for force quit command (emergency escape hatch)
     if ForceQuitCommandDetector.matches(result) {
       transcriptionFeatureLogger.fault("Force quit voice command recognized; terminating Hex.")
+      state.isTranscribing = false
       return .run { _ in
         FileManager.default.removeItemIfExists(at: audioURL)
         await MainActor.run {
@@ -426,47 +435,65 @@ private extension TranscriptionFeature {
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
+      state.isTranscribing = false
       return .run { _ in
         FileManager.default.removeItemIfExists(at: audioURL)
       }
     }
 
     transcriptionFeatureLogger.info("Raw transcription: '\(result, privacy: .private)'")
-    let remappings = state.hexSettings.wordRemappings
-    let removalsEnabled = state.hexSettings.wordRemovalsEnabled
-    let removals = state.hexSettings.wordRemovals
-    let modifiedResult: String
-    if state.isRemappingScratchpadFocused {
-      modifiedResult = result
-      transcriptionFeatureLogger.info("Scratchpad focused; skipping word modifications")
-    } else {
-      var output = result
-      if removalsEnabled {
-        let removedResult = WordRemovalApplier.apply(output, removals: removals)
-        if removedResult != output {
-          let enabledRemovalCount = removals.filter(\.isEnabled).count
-          transcriptionFeatureLogger.info("Applied \(enabledRemovalCount) word removal(s)")
-        }
-        output = removedResult
-      }
-      let remappedResult = WordRemappingApplier.apply(output, remappings: remappings)
-      if remappedResult != output {
-        transcriptionFeatureLogger.info("Applied \(remappings.count) word remapping(s)")
-      }
-      modifiedResult = remappedResult
-    }
 
-    guard !modifiedResult.isEmpty else {
-      return .run { _ in
-        FileManager.default.removeItemIfExists(at: audioURL)
-      }
-    }
-
+    let settings = state.hexSettings
+    let scratchpadFocused = state.isRemappingScratchpadFocused
     let sourceAppBundleID = state.sourceAppBundleID
     let sourceAppName = state.sourceAppName
     let transcriptionHistory = state.$transcriptionHistory
 
-    return .run { send in
+    // The AI cleanup pass is skipped while the scratchpad is focused so the
+    // preview stays deterministic.
+    let runCleanup = settings.aiCleanupEnabled && !scratchpadFocused
+
+    guard runCleanup else {
+      // Fast path: deterministic modifications only, indicator hides immediately.
+      state.isTranscribing = false
+      let modifiedResult = Self.applyWordModifications(result, settings: settings, scratchpadFocused: scratchpadFocused)
+      guard !modifiedResult.isEmpty else {
+        return .run { _ in FileManager.default.removeItemIfExists(at: audioURL) }
+      }
+      return .run { send in
+        do {
+          try await finalizeRecordingAndStoreTranscript(
+            result: modifiedResult,
+            duration: duration,
+            sourceAppBundleID: sourceAppBundleID,
+            sourceAppName: sourceAppName,
+            audioURL: audioURL,
+            transcriptionHistory: transcriptionHistory
+          )
+        } catch {
+          await send(.transcriptionError(error, audioURL))
+        }
+      }
+      .cancellable(id: CancelID.transcription)
+    }
+
+    // Cleanup path: keep the processing indicator visible while the on-device
+    // model runs. The effect is cancelable (ESC) via CancelID.transcription.
+    transcriptionFeatureLogger.info("Running AI cleanup before paste")
+    return .run { [transcriptCleanup] send in
+      let cleaned = await Self.cleanedTranscript(
+        raw: result,
+        settings: settings,
+        client: transcriptCleanup
+      )
+      let modifiedResult = Self.applyWordModifications(cleaned, settings: settings, scratchpadFocused: false)
+
+      await send(.transcriptionPipelineFinished)
+
+      guard !modifiedResult.isEmpty else {
+        FileManager.default.removeItemIfExists(at: audioURL)
+        return
+      }
       do {
         try await finalizeRecordingAndStoreTranscript(
           result: modifiedResult,
@@ -481,6 +508,69 @@ private extension TranscriptionFeature {
       }
     }
     .cancellable(id: CancelID.transcription)
+  }
+
+  /// Applies word removals + remappings, mirroring the settings preview.
+  static func applyWordModifications(
+    _ result: String,
+    settings: HexSettings,
+    scratchpadFocused: Bool
+  ) -> String {
+    if scratchpadFocused {
+      transcriptionFeatureLogger.info("Scratchpad focused; skipping word modifications")
+      return result
+    }
+    var output = result
+    if settings.wordRemovalsEnabled {
+      let removedResult = WordRemovalApplier.apply(output, removals: settings.wordRemovals)
+      if removedResult != output {
+        let enabledRemovalCount = settings.wordRemovals.filter(\.isEnabled).count
+        transcriptionFeatureLogger.info("Applied \(enabledRemovalCount) word removal(s)")
+      }
+      output = removedResult
+    }
+    let remappedResult = WordRemappingApplier.apply(output, remappings: settings.wordRemappings)
+    if remappedResult != output {
+      transcriptionFeatureLogger.info("Applied \(settings.wordRemappings.count) word remapping(s)")
+    }
+    return remappedResult
+  }
+
+  /// Runs the optional AI cleanup pass with a hard timeout, an empty-output
+  /// check, and the deterministic word-count guard. Any failure falls back to
+  /// the raw transcript so the paste is never blocked or corrupted.
+  static func cleanedTranscript(
+    raw: String,
+    settings: HexSettings,
+    client: TranscriptCleanupClient
+  ) async -> String {
+    guard settings.aiCleanupEnabled else { return raw }
+    do {
+      let cleaned = try await withCleanupTimeout {
+        try await client.cleanup(raw, settings.aiCleanupPrompt)
+      }
+      let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else {
+        transcriptionFeatureLogger.info("AI cleanup returned empty output; using raw transcript")
+        return raw
+      }
+      if TranscriptCleanupGuard.isLikelyHallucination(input: raw, output: trimmed) {
+        transcriptionFeatureLogger.notice("AI cleanup rejected: output diverged, likely answered instead of cleaned")
+        return raw
+      }
+      transcriptionFeatureLogger.info(
+        "AI cleanup succeeded: '\(raw, privacy: .private)' -> '\(trimmed, privacy: .private)'"
+      )
+      return trimmed
+    } catch is CleanupTimeoutError {
+      transcriptionFeatureLogger.error("AI cleanup timed out; using raw transcript")
+      return raw
+    } catch {
+      transcriptionFeatureLogger.error(
+        "AI cleanup errored (\(error.localizedDescription)); using raw transcript"
+      )
+      return raw
+    }
   }
 
   func handleTranscriptionError(
@@ -616,6 +706,35 @@ struct TranscriptionView: View {
       await store.send(.task).finish()
     }
     .enableInjection()
+  }
+}
+
+// MARK: - AI Cleanup Timeout
+
+/// Thrown when the cleanup model exceeds `cleanupTimeout`.
+private struct CleanupTimeoutError: Error {}
+
+/// Upper bound on how long the paste will wait for the on-device model before
+/// falling back to the raw transcript. On-device cleanup typically takes a few
+/// seconds; this is a safety net so a hung model never blocks a paste.
+private let cleanupTimeout: Duration = .seconds(20)
+
+/// Races `operation` against `cleanupTimeout`, throwing `CleanupTimeoutError`
+/// if the timeout wins. The losing child task is cancelled.
+private func withCleanupTimeout<T: Sendable>(
+  _ operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+  try await withThrowingTaskGroup(of: T.self) { group in
+    group.addTask { try await operation() }
+    group.addTask {
+      try await Task.sleep(for: cleanupTimeout)
+      throw CleanupTimeoutError()
+    }
+    defer { group.cancelAll() }
+    guard let result = try await group.next() else {
+      throw CleanupTimeoutError()
+    }
+    return result
   }
 }
 

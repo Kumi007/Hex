@@ -113,6 +113,11 @@ struct SettingsFeature {
     case updateWordRemapping(WordRemapping)
     case removeWordRemapping(UUID)
     case setRemappingScratchpadFocused(Bool)
+
+    // AI cleanup
+    case setAICleanupEnabled(Bool)
+    case setAICleanupPrompt(String)
+    case resetAICleanupPrompt
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -562,6 +567,18 @@ struct SettingsFeature {
 
       case let .setWordRemovalsEnabled(enabled):
         state.$hexSettings.withLock { $0.wordRemovalsEnabled = enabled }
+        return .none
+
+      case let .setAICleanupEnabled(enabled):
+        state.$hexSettings.withLock { $0.aiCleanupEnabled = enabled }
+        return .none
+
+      case let .setAICleanupPrompt(prompt):
+        state.$hexSettings.withLock { $0.aiCleanupPrompt = prompt }
+        return .none
+
+      case .resetAICleanupPrompt:
+        state.$hexSettings.withLock { $0.aiCleanupPrompt = HexSettings.defaultAICleanupPrompt }
         return .none
 
       }
