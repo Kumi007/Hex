@@ -6,6 +6,7 @@ import SwiftUI
 struct WordRemappingsView: View {
 	@ObserveInjection var inject
 	@Bindable var store: StoreOf<SettingsFeature>
+	@Dependency(\.transcriptCleanup) private var cleanupClient
 	@FocusState private var isScratchpadFocused: Bool
 	@State private var activeSection: ModificationSection = .removals
 
@@ -54,6 +55,8 @@ struct WordRemappingsView: View {
 					.padding(.vertical, 6)
 				}
 
+				aiCleanupSection
+
 				Picker("Modification Type", selection: $activeSection) {
 					ForEach(ModificationSection.allCases) { section in
 						Text(section.title).tag(section)
@@ -76,6 +79,85 @@ struct WordRemappingsView: View {
 			store.send(.setRemappingScratchpadFocused(false))
 		}
 		.enableInjection()
+	}
+
+	private var aiCleanupSection: some View {
+		GroupBox {
+			VStack(alignment: .leading, spacing: 10) {
+				Toggle(
+					"Enable AI Cleanup",
+					isOn: Binding(
+						get: { store.hexSettings.aiCleanupEnabled },
+						set: { store.send(.setAICleanupEnabled($0)) }
+					)
+				)
+				.toggleStyle(.checkbox)
+
+				availabilityStatus
+
+				if store.hexSettings.aiCleanupEnabled {
+					Divider()
+
+					VStack(alignment: .leading, spacing: 6) {
+						HStack {
+							Text("Instructions")
+								.font(.caption.weight(.semibold))
+								.foregroundStyle(.secondary)
+							Spacer()
+							Button("Reset to recommended") {
+								store.send(.resetAICleanupPrompt)
+							}
+							.buttonStyle(.borderless)
+							.font(.caption)
+						}
+
+						TextEditor(
+							text: Binding(
+								get: { store.hexSettings.aiCleanupPrompt },
+								set: { store.send(.setAICleanupPrompt($0)) }
+							)
+						)
+						.font(.system(.callout, design: .monospaced))
+						.frame(minHeight: 140, maxHeight: 220)
+						.padding(6)
+						.background(
+							RoundedRectangle(cornerRadius: 6)
+								.fill(Color(nsColor: .textBackgroundColor))
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 6)
+								.stroke(Color(nsColor: .separatorColor))
+						)
+
+						Text("The transcript is sent wrapped in « » so the model rewrites your words instead of answering them.")
+							.settingsCaption()
+					}
+				}
+			}
+			.padding(.vertical, 4)
+		} label: {
+			VStack(alignment: .leading, spacing: 4) {
+				Text("AI Cleanup")
+					.font(.headline)
+				Text("Polish each transcript with Apple's on-device model: spoken punctuation, self-corrections, filler removal — fully private, never leaves your Mac.")
+					.settingsCaption()
+			}
+		}
+	}
+
+	@ViewBuilder
+	private var availabilityStatus: some View {
+		let available = cleanupClient.isAvailable()
+		HStack(spacing: 6) {
+			Image(systemName: available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+				.foregroundStyle(available ? Color.green : Color.orange)
+			Text(available
+				? "On-device model ready"
+				: "On-device model unavailable — \(cleanupClient.availabilityDescription()). Transcripts paste uncleaned.")
+				.font(.caption)
+				.foregroundStyle(.secondary)
+				.fixedSize(horizontal: false, vertical: true)
+		}
 	}
 
 	private var removalsSection: some View {
