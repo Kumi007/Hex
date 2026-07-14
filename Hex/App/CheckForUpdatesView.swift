@@ -8,6 +8,15 @@ import SwiftUI
 @MainActor
 final class CheckForUpdatesViewModel {
 	init() {
+		// Disable silent background updates. Sparkle must never swap in a
+		// differently-signed build on its own; updates are manual-only via the
+		// "Check for Updates…" button. Setting these here overrides any value a
+		// user previously persisted by answering Sparkle's first-run prompt, so
+		// the Info.plist defaults (SUEnableAutomaticChecks/SUAutomaticallyUpdate
+		// = false) can't be undone by stale UserDefaults.
+		controller.updater.automaticallyChecksForUpdates = false
+		controller.updater.automaticallyDownloadsUpdates = false
+
 		anyCancellable = controller.updater.publisher(for: \.canCheckForUpdates)
 			.sink(receiveValue: { self.canCheckForUpdates = $0 })
 	}

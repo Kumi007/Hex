@@ -150,9 +150,12 @@ class KeyEventMonitorClientLive {
         }
         let shouldStart = self.continuations.count == 1 && self.inputContinuations.isEmpty
 
-        // Start monitoring if this is the first subscription
+        // Start monitoring if this is the first subscription. Hop off the barrier
+        // so startMonitoring()'s blocking AX/TCC permission work and tap start
+        // don't run while this barrier holds the concurrent queue — otherwise the
+        // event-tap callback's queue.sync can deadlock when the app is untrusted.
         if shouldStart {
-          self.startMonitoring()
+          Task { [weak self] in self?.startMonitoring() }
         }
       }
 
@@ -200,8 +203,10 @@ class KeyEventMonitorClientLive {
       self.continuations[uuid] = handler
       let shouldStart = self.continuations.count == 1 && self.inputContinuations.isEmpty
 
+      // See listenForKeyPress: start monitoring off the barrier so its blocking
+      // permission work can't deadlock the event-tap callback's queue.sync.
       if shouldStart {
-        self.startMonitoring()
+        Task { [weak self] in self?.startMonitoring() }
       }
     }
 
@@ -218,8 +223,10 @@ class KeyEventMonitorClientLive {
       self.inputContinuations[uuid] = handler
       let shouldStart = self.inputContinuations.count == 1 && self.continuations.isEmpty
 
+      // See listenForKeyPress: start monitoring off the barrier so its blocking
+      // permission work can't deadlock the event-tap callback's queue.sync.
       if shouldStart {
-        self.startMonitoring()
+        Task { [weak self] in self?.startMonitoring() }
       }
     }
 
