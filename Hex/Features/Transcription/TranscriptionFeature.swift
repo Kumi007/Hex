@@ -449,6 +449,10 @@ private extension TranscriptionFeature {
     let sourceAppName = state.sourceAppName
     let transcriptionHistory = state.$transcriptionHistory
 
+    // Dictionary runs first, on the raw transcript, so AI cleanup and word
+    // modifications downstream see the corrected proper nouns.
+    let dictated = Self.applyDictionary(result, settings: settings, scratchpadFocused: scratchpadFocused)
+
     // The AI cleanup pass is skipped while the scratchpad is focused so the
     // preview stays deterministic.
     let runCleanup = settings.aiCleanupEnabled && !scratchpadFocused
@@ -456,7 +460,7 @@ private extension TranscriptionFeature {
     guard runCleanup else {
       // Fast path: deterministic modifications only, indicator hides immediately.
       state.isTranscribing = false
-      let modifiedResult = Self.applyWordModifications(result, settings: settings, scratchpadFocused: scratchpadFocused)
+      let modifiedResult = Self.applyWordModifications(dictated, settings: settings, scratchpadFocused: scratchpadFocused)
       guard !modifiedResult.isEmpty else {
         return .run { _ in FileManager.default.removeItemIfExists(at: audioURL) }
       }
@@ -482,7 +486,7 @@ private extension TranscriptionFeature {
     transcriptionFeatureLogger.info("Running AI cleanup before paste")
     return .run { [transcriptCleanup] send in
       let cleaned = await Self.cleanedTranscript(
-        raw: result,
+        raw: dictated,
         settings: settings,
         client: transcriptCleanup
       )
@@ -508,6 +512,22 @@ private extension TranscriptionFeature {
       }
     }
     .cancellable(id: CancelID.transcription)
+  }
+
+  /// Applies the proactive dictionary to the raw transcript, snapping
+  /// phonetically-similar mis-hearings onto the user's canonical terms. Skipped
+  /// while the scratchpad is focused so raw dictation reaches the scratchpad.
+  static func applyDictionary(
+    _ result: String,
+    settings: HexSettings,
+    scratchpadFocused: Bool
+  ) -> String {
+    guard settings.dictionaryEnabled, !scratchpadFocused else { return result }
+    let corrected = DictionaryApplier.apply(result, entries: settings.dictionaryEntries)
+    if corrected != result {
+      transcriptionFeatureLogger.info("Dictionary corrected the transcript")
+    }
+    return corrected
   }
 
   /// Applies word removals + remappings, mirroring the settings preview.

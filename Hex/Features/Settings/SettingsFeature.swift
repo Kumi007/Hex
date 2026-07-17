@@ -118,6 +118,12 @@ struct SettingsFeature {
     case setAICleanupEnabled(Bool)
     case setAICleanupPrompt(String)
     case resetAICleanupPrompt
+
+    // Dictionary
+    case setDictionaryEnabled(Bool)
+    case addDictionaryEntry
+    case updateDictionaryEntry(DictionaryEntry)
+    case removeDictionaryEntry(UUID)
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -579,6 +585,29 @@ struct SettingsFeature {
 
       case .resetAICleanupPrompt:
         state.$hexSettings.withLock { $0.aiCleanupPrompt = HexSettings.defaultAICleanupPrompt }
+        return .none
+
+      case let .setDictionaryEnabled(enabled):
+        state.$hexSettings.withLock { $0.dictionaryEnabled = enabled }
+        return .none
+
+      case .addDictionaryEntry:
+        state.$hexSettings.withLock {
+          $0.dictionaryEntries.append(.init(term: ""))
+        }
+        return .none
+
+      case let .updateDictionaryEntry(entry):
+        state.$hexSettings.withLock {
+          guard let index = $0.dictionaryEntries.firstIndex(where: { $0.id == entry.id }) else { return }
+          $0.dictionaryEntries[index] = entry
+        }
+        return .none
+
+      case let .removeDictionaryEntry(id):
+        state.$hexSettings.withLock {
+          $0.dictionaryEntries.removeAll { $0.id == id }
+        }
         return .none
 
       }

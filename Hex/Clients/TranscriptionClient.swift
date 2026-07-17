@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import ComposableArchitecture
 import Dependencies
 import DependenciesMacros
 import Foundation
@@ -73,6 +74,10 @@ actor TranscriptionClientLive {
   /// The name of the currently loaded model, if any.
   private var currentModelName: String?
   private var parakeet: ParakeetClient = ParakeetClient()
+
+  /// User settings, read to apply the proactive dictionary's initial-prompt
+  /// biasing on the WhisperKit path.
+  @Shared(.hexSettings) private var hexSettings: HexSettings
 
   /// The base folder under which we store model data (e.g., ~/Library/Application Support/...).
   private lazy var modelsBaseFolder: URL = {
@@ -266,10 +271,26 @@ actor TranscriptionClientLive {
       )
     }
 
+    // Proactive dictionary: bias the decoder toward the user's terms via an
+    // initial prompt. Whisper treats promptTokens as prior context, nudging the
+    // spelling of proper nouns and jargon before it ever hears the audio.
+    var decodeOptions = options
+    if hexSettings.dictionaryEnabled,
+       let biasPrompt = DictionaryBiasPrompt.build(from: hexSettings.dictionaryEntries),
+       let tokenizer = whisperKit.tokenizer {
+      let specialBegin = tokenizer.specialTokens.specialTokenBegin
+      let promptTokens = tokenizer.encode(text: " " + biasPrompt).filter { $0 < specialBegin }
+      if !promptTokens.isEmpty {
+        decodeOptions.promptTokens = (decodeOptions.promptTokens ?? []) + promptTokens
+        decodeOptions.usePrefillPrompt = true
+        transcriptionLogger.info("Applied dictionary bias prompt (\(promptTokens.count) tokens)")
+      }
+    }
+
     // Perform the transcription.
     transcriptionLogger.notice("Transcribing with WhisperKit model=\(model) file=\(url.lastPathComponent)")
     let startTx = Date()
-    let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: options)
+    let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: decodeOptions)
     transcriptionLogger.info("WhisperKit transcription took \(String(format: "%.2f", Date().timeIntervalSince(startTx)))s")
     transcriptionLogger.info("WhisperKit request total elapsed \(String(format: "%.2f", Date().timeIntervalSince(startAll)))s")
 

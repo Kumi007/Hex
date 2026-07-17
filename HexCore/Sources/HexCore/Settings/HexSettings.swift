@@ -67,6 +67,8 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var wordRemappings: [WordRemapping]
 	public var aiCleanupEnabled: Bool
 	public var aiCleanupPrompt: String
+	public var dictionaryEnabled: Bool
+	public var dictionaryEntries: [DictionaryEntry]
 
 	private mutating func normalizeDoubleTapSettings() {
 		if !doubleTapLockEnabled {
@@ -100,7 +102,9 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		wordRemovals: [WordRemoval] = HexSettings.defaultWordRemovals,
 		wordRemappings: [WordRemapping] = [],
 		aiCleanupEnabled: Bool = false,
-		aiCleanupPrompt: String = HexSettings.defaultAICleanupPrompt
+		aiCleanupPrompt: String = HexSettings.defaultAICleanupPrompt,
+		dictionaryEnabled: Bool = false,
+		dictionaryEntries: [DictionaryEntry] = []
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.soundEffectsVolume = soundEffectsVolume
@@ -128,6 +132,8 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.wordRemappings = wordRemappings
 		self.aiCleanupEnabled = aiCleanupEnabled
 		self.aiCleanupPrompt = aiCleanupPrompt
+		self.dictionaryEnabled = dictionaryEnabled
+		self.dictionaryEntries = dictionaryEntries
 		normalizeDoubleTapSettings()
 	}
 
@@ -178,6 +184,8 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case wordRemappings
 	case aiCleanupEnabled
 	case aiCleanupPrompt
+	case dictionaryEnabled
+	case dictionaryEntries
 }
 
 private struct SettingsField<Value: Codable & Sendable> {
@@ -312,6 +320,8 @@ private enum HexSettingsSchema {
 			default: defaults.wordRemappings
 		).eraseToAny(),
 		SettingsField(.aiCleanupEnabled, keyPath: \.aiCleanupEnabled, default: defaults.aiCleanupEnabled).eraseToAny(),
-		SettingsField(.aiCleanupPrompt, keyPath: \.aiCleanupPrompt, default: defaults.aiCleanupPrompt).eraseToAny()
+		SettingsField(.aiCleanupPrompt, keyPath: \.aiCleanupPrompt, default: defaults.aiCleanupPrompt).eraseToAny(),
+		SettingsField(.dictionaryEnabled, keyPath: \.dictionaryEnabled, default: defaults.dictionaryEnabled).eraseToAny(),
+		SettingsField(.dictionaryEntries, keyPath: \.dictionaryEntries, default: defaults.dictionaryEntries).eraseToAny()
 	]
 }

@@ -8,7 +8,7 @@ struct WordRemappingsView: View {
 	@Bindable var store: StoreOf<SettingsFeature>
 	@Dependency(\.transcriptCleanup) private var cleanupClient
 	@FocusState private var isScratchpadFocused: Bool
-	@State private var activeSection: ModificationSection = .removals
+	@State private var activeSection: ModificationSection = .dictionary
 
 	var body: some View {
 		ScrollView {
@@ -66,6 +66,8 @@ struct WordRemappingsView: View {
 				.labelsHidden()
 
 				switch activeSection {
+				case .dictionary:
+					dictionarySection
 				case .removals:
 					removalsSection
 				case .remappings:
@@ -158,6 +160,70 @@ struct WordRemappingsView: View {
 				.foregroundStyle(.secondary)
 				.fixedSize(horizontal: false, vertical: true)
 		}
+	}
+
+	private var dictionarySection: some View {
+		GroupBox {
+			VStack(alignment: .leading, spacing: 10) {
+				Toggle(
+					"Enable Dictionary",
+					isOn: Binding(
+						get: { store.hexSettings.dictionaryEnabled },
+						set: { store.send(.setDictionaryEnabled($0)) }
+					)
+				)
+				.toggleStyle(.checkbox)
+
+				dictionaryColumnHeaders
+
+				LazyVStack(alignment: .leading, spacing: 6) {
+					ForEach(store.hexSettings.dictionaryEntries) { entry in
+						DictionaryRow(entry: dictionaryBinding(for: entry)) {
+							store.send(.removeDictionaryEntry(entry.id))
+						}
+					}
+				}
+
+				HStack {
+					Button {
+						store.send(.addDictionaryEntry)
+					} label: {
+						Label("Add Word", systemImage: "plus")
+					}
+					Spacer()
+				}
+			}
+			.padding(.vertical, 4)
+		} label: {
+			VStack(alignment: .leading, spacing: 4) {
+				Text("Dictionary")
+					.font(.headline)
+				Text("Teach Hex special words — names, brands, jargon. On Whisper models it biases recognition up front; on every engine it snaps close-sounding mis-hearings onto your spelling.")
+					.settingsCaption()
+			}
+		}
+	}
+
+	private var dictionaryColumnHeaders: some View {
+		HStack(spacing: 8) {
+			Text("On")
+				.frame(width: Layout.toggleColumnWidth, alignment: .leading)
+			Text("Word or phrase")
+				.frame(maxWidth: .infinity, alignment: .leading)
+			Spacer().frame(width: Layout.deleteColumnWidth)
+		}
+		.font(.caption)
+		.foregroundStyle(.secondary)
+		.padding(.horizontal, Layout.rowHorizontalPadding)
+	}
+
+	private func dictionaryBinding(for entry: DictionaryEntry) -> Binding<DictionaryEntry> {
+		return Binding(
+			get: {
+				store.hexSettings.dictionaryEntries.first { $0.id == entry.id } ?? entry
+			},
+			set: { store.send(.updateDictionaryEntry($0)) }
+		)
 	}
 
 	private var removalsSection: some View {
@@ -287,11 +353,46 @@ struct WordRemappingsView: View {
 
 	private var previewText: String {
 		var output = store.remappingScratchpadText
+		// Mirror the live pipeline order: dictionary → removals → remappings.
+		if store.hexSettings.dictionaryEnabled {
+			output = DictionaryApplier.apply(output, entries: store.hexSettings.dictionaryEntries)
+		}
 		if store.hexSettings.wordRemovalsEnabled {
 			output = WordRemovalApplier.apply(output, removals: store.hexSettings.wordRemovals)
 		}
 		output = WordRemappingApplier.apply(output, remappings: store.hexSettings.wordRemappings)
 		return output
+	}
+}
+
+private struct DictionaryRow: View {
+	@Binding var entry: DictionaryEntry
+	var onDelete: () -> Void
+
+	var body: some View {
+		HStack(spacing: 8) {
+			Toggle("", isOn: $entry.isEnabled)
+				.labelsHidden()
+				.toggleStyle(.checkbox)
+				.frame(width: Layout.toggleColumnWidth, alignment: .leading)
+
+			TextField("e.g. Hex Max", text: $entry.term)
+				.textFieldStyle(.roundedBorder)
+				.frame(maxWidth: .infinity, alignment: .leading)
+
+			Button(role: .destructive, action: onDelete) {
+				Image(systemName: "trash")
+			}
+			.buttonStyle(.borderless)
+			.frame(width: Layout.deleteColumnWidth)
+		}
+		.padding(.horizontal, Layout.rowHorizontalPadding)
+		.padding(.vertical, Layout.rowVerticalPadding)
+		.frame(maxWidth: .infinity)
+		.background(
+			RoundedRectangle(cornerRadius: Layout.rowCornerRadius)
+				.fill(Color(nsColor: .controlBackgroundColor))
+		)
 	}
 }
 
@@ -365,6 +466,7 @@ private struct RemappingRow: View {
 }
 
 private enum ModificationSection: String, CaseIterable, Identifiable {
+	case dictionary
 	case removals
 	case remappings
 
@@ -372,6 +474,8 @@ private enum ModificationSection: String, CaseIterable, Identifiable {
 
 	var title: String {
 		switch self {
+		case .dictionary:
+			return "Dictionary"
 		case .removals:
 			return "Word Removals"
 		case .remappings:
